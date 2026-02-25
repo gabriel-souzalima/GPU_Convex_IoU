@@ -4,15 +4,17 @@ GPU-accelerated Intersection over Union (IoU) computation for ellipses using con
 
 ## Performance
 
-Benchmarked on DIOR dataset with 2,048 images and 134,625 detections (~1 million IoU pairs):
+Benchmarked with 5,000 images, 50 detections/image, 10 ground truths/image (2.5 million IoU pairs) on an RTX 2060:
 
-| Method | Wall Time | IoU-only Time | Speedup |
-|--------|-----------|---------------|---------|
-| Shapely (CPU) | 550 sec | 545 sec | 1x |
-| GPU Per-image | 18 sec | ~12 sec | 30x |
-| **GPU Batched** | **5 sec** | **2.3 sec** | **110x (wall) / 240x (IoU)** |
+| Method | Time | Throughput | Speedup |
+|--------|------|------------|--------|
+| Shapely (CPU) | ~977 sec (estimated) | 2.6 K pairs/sec | 1x |
+| GPU Per-image | 11.2 sec | 0.22 M pairs/sec | ~87x |
+| **GPU Batched** | **458 ms** | **5.5 M pairs/sec** | **~2,133x** |
 
-**Accuracy**: Maximum difference vs Shapely is 0.0002 (0.02%) - negligible for all practical purposes.
+**Accuracy**: Maximum difference vs Shapely is 0.028 — mean difference 0.00015 — negligible for all practical purposes.
+
+**Batched vs Per-image**: The batched kernel is 24x faster than calling the GPU per-image, because it eliminates thousands of kernel launch overheads.
 
 ## How It Works
 
@@ -32,7 +34,7 @@ Benchmarked on DIOR dataset with 2,048 images and 134,625 detections (~1 million
 ### Requirements
 
 - CUDA Toolkit (11.0+)
-- Python 3.7+
+- Python 3.8+
 - pybind11
 - numpy
 
@@ -72,13 +74,13 @@ Where:
 
 ### Functions
 
-#### 1. Single Image: `calculate_iou_rectangular_numpy_from_numpy`
+#### 1. Single Image: `rectangular_iou`
 
 Compute IoU matrix between detections and ground truths for **one image**:
 
 ```python
 import numpy as np
-import convexiou_gpu
+from convexiou import rectangular_iou
 
 # Detections: (N_det, 5) - [x, y, w, h, angle_rad]
 detections = np.array([
@@ -93,68 +95,44 @@ ground_truths = np.array([
 ], dtype=np.float64)
 
 # Compute IoU matrix (N_det x N_gt)
-iou_matrix = convexiou_gpu.calculate_iou_rectangular_numpy_from_numpy(
-    detections, 
-    ground_truths, 
-    num_points=16  # Polygon approximation points
-)
+iou_matrix = rectangular_iou(detections, ground_truths, num_points=16)
 
 print(iou_matrix.shape)  # (2, 2)
 print(iou_matrix)        # [[0.85, 0.0], [0.0, 0.0]]
 ```
 
-#### 2. Batched (OPTIMAL): `calculate_iou_batched_rectangular`
+#### 2. Batched (OPTIMAL): `batched_iou_from_lists`
 
-Compute IoU for **ALL images** in a single GPU call. This is 3-4x faster than per-image calls:
+Compute IoU for **ALL images** in a single GPU call. This is the recommended
+function for detector evaluation — ~24x faster than per-image calls and ~2,000x
+faster than Shapely:
 
 ```python
-import numpy as np
-import convexiou_gpu
+from convexiou import batched_iou_from_lists
 
-# Concatenate ALL detections and ground truths
-all_dets = np.vstack([dets_img0, dets_img1, dets_img2, ...])  # (total_dets, 5)
-all_gts = np.vstack([gts_img0, gts_img1, gts_img2, ...])      # (total_gts, 5)
+# dets_per_image: list of (N_i, 5) float64 arrays, one per image
+# gts_per_image:  list of (M_i, 5) float64 arrays, one per image
+iou_matrices = batched_iou_from_lists(dets_per_image, gts_per_image, num_points=16)
 
-# Build pair_info: [det_offset, gt_offset, out_offset, n_det, n_gt] per image
-pair_info = []
-det_offset = 0
-gt_offset = 0
-out_offset = 0
-
-for img_idx in range(num_images):
-    n_det = len(dets_per_image[img_idx])
-    n_gt = len(gts_per_image[img_idx])
-    
-    pair_info.append([det_offset, gt_offset, out_offset, n_det, n_gt])
-    
-    det_offset += n_det
-    gt_offset += n_gt
-    out_offset += n_det * n_gt
-
-pair_info = np.array(pair_info, dtype=np.int32)
-
-# Single GPU call for all images
-results, total_size = convexiou_gpu.calculate_iou_batched_rectangular(
-    all_dets.astype(np.float64),
-    all_gts.astype(np.float64),
-    pair_info,
-    num_points=16
-)
-
-# Extract per-image IoU matrices
-for img_idx in range(num_images):
-    det_off, gt_off, out_off, n_det, n_gt = pair_info[img_idx]
-    if n_det > 0 and n_gt > 0:
-        iou_matrix = results[out_off:out_off + n_det * n_gt].reshape(n_det, n_gt)
+# iou_matrices[i] is the (N_i, M_i) IoU matrix for image i
 ```
 
-#### 3. NxN Matrix (for NMS): `calculate_iou_matrix_numpy_from_numpy`
+This function handles all the batching internally — no need to manually build
+offset arrays. It concatenates boxes, builds pair metadata, launches a single
+GPU kernel, and splits the results back into per-image matrices.
+
+Empty detection or ground truth arrays are handled automatically (returns
+zero-filled matrices for those images).
+
+#### 3. NxN Matrix (for NMS): `matrix_iou`
 
 Compute pairwise IoU for all boxes (useful for NMS):
 
 ```python
+from convexiou import matrix_iou
+
 boxes = np.array([...], dtype=np.float64)  # (N, 5)
-iou_matrix = convexiou_gpu.calculate_iou_matrix_numpy_from_numpy(boxes, num_points=16)
+iou_matrix = matrix_iou(boxes, num_points=16)
 # Returns (N, N) matrix
 ```
 
@@ -167,39 +145,17 @@ To integrate GPU IoU with your rotated object detector's evaluation code:
 #### 1. Import the Library
 
 ```python
-# Try to import GPU IoU, fall back gracefully if not available
-try:
-    import convexiou_gpu
-    HAS_GPU_IOU = True
-except ImportError:
-    convexiou_gpu = None
-    HAS_GPU_IOU = False
+from convexiou import rectangular_iou, batched_iou_from_lists
 ```
 
-#### 2. Convert OBB to Ellipse Format
+#### 2. Replace Your IoU Function
 
-Your detector likely outputs OBBs as `[x, y, w, h, angle]`. The GPU IoU library expects the same format - it handles the OBB→ellipse conversion internally:
-
-```python
-def prepare_boxes_for_gpu_iou(boxes):
-    """
-    Ensure boxes are in the correct format for GPU IoU.
-    
-    Input:  boxes with shape (N, 5+) as [x, y, w, h, angle_rad, ...]
-    Output: boxes with shape (N, 5) as [x, y, w, h, angle_rad]
-    
-    Note: angle must be in RADIANS. If your detector outputs degrees:
-        boxes[:, 4] = np.deg2rad(boxes[:, 4])
-    """
-    return np.ascontiguousarray(boxes[:, :5], dtype=np.float64)
-```
-
-#### 3. Replace Your IoU Function
+The library expects boxes as `[x, y, w, h, angle_rad]` — the same format used by
+most rotated object detectors. No conversion needed.
 
 **Before (CPU with Shapely):**
 ```python
 def compute_iou_matrix(det_boxes, gt_boxes):
-    # Slow loop-based Shapely computation
     ious = np.zeros((len(det_boxes), len(gt_boxes)))
     for i, det in enumerate(det_boxes):
         for j, gt in enumerate(gt_boxes):
@@ -207,70 +163,23 @@ def compute_iou_matrix(det_boxes, gt_boxes):
     return ious
 ```
 
-**After (GPU):**
+**After (single image):**
 ```python
-def compute_iou_matrix(det_boxes, gt_boxes, use_gpu=True):
-    if use_gpu and HAS_GPU_IOU and len(det_boxes) > 0 and len(gt_boxes) > 0:
-        dets = prepare_boxes_for_gpu_iou(det_boxes)
-        gts = prepare_boxes_for_gpu_iou(gt_boxes)
-        return convexiou_gpu.calculate_iou_rectangular_numpy_from_numpy(
-            dets, gts, num_points=16
-        )
-    else:
-        # Fallback to CPU
-        return compute_iou_matrix_cpu(det_boxes, gt_boxes)
+from convexiou import rectangular_iou
+
+def compute_iou_matrix(det_boxes, gt_boxes):
+    return rectangular_iou(
+        det_boxes.astype(np.float64),
+        gt_boxes.astype(np.float64),
+    )
 ```
 
-#### 4. For Evaluation Loops (OPTIMAL)
-
-For mAP evaluation over many images, use the batched API:
-
+**After (all images at once — recommended):**
 ```python
-def evaluate_all_images_batched(all_detections, all_ground_truths):
-    """
-    Evaluate IoU for all images in a single GPU call.
-    
-    all_detections: list of (N_i, 5) arrays, one per image
-    all_ground_truths: list of (M_i, 5) arrays, one per image
-    """
-    # Concatenate all boxes
-    all_dets_list = [d for d in all_detections if len(d) > 0]
-    all_gts_list = [g for g in all_ground_truths if len(g) > 0]
-    
-    if not all_dets_list or not all_gts_list:
-        return []
-    
-    all_dets = np.vstack(all_dets_list).astype(np.float64)
-    all_gts = np.vstack(all_gts_list).astype(np.float64)
-    
-    # Build pair info
-    pair_info = []
-    det_offset = gt_offset = out_offset = 0
-    
-    for dets, gts in zip(all_detections, all_ground_truths):
-        n_det, n_gt = len(dets), len(gts)
-        pair_info.append([det_offset, gt_offset, out_offset, n_det, n_gt])
-        det_offset += n_det
-        gt_offset += n_gt
-        out_offset += n_det * n_gt
-    
-    pair_info = np.array(pair_info, dtype=np.int32)
-    
-    # Single GPU call
-    results, _ = convexiou_gpu.calculate_iou_batched_rectangular(
-        all_dets, all_gts, pair_info, num_points=16
-    )
-    
-    # Extract per-image results
-    iou_matrices = []
-    for i, (_, _, out_off, n_det, n_gt) in enumerate(pair_info):
-        if n_det > 0 and n_gt > 0:
-            iou = results[out_off:out_off + n_det * n_gt].reshape(n_det, n_gt)
-        else:
-            iou = np.zeros((n_det, n_gt), dtype=np.float32)
-        iou_matrices.append(iou)
-    
-    return iou_matrices
+from convexiou import batched_iou_from_lists
+
+def evaluate_all_images(all_detections, all_ground_truths):
+    return batched_iou_from_lists(all_detections, all_ground_truths)
 ```
 
 ### Environment Variables
@@ -290,14 +199,21 @@ def evaluate_all_images_batched(all_detections, all_ground_truths):
 ## File Structure
 
 ```
-gpu_convex_IoU/
+GPU_Convex_IoU/
 ├── README.md              # This file
-├── setup.py               # Build configuration
-├── device_iou.cuh         # CUDA device functions (polygon ops)
+├── pyproject.toml         # Package metadata (PEP 621)
+├── setup.py               # Build configuration (CUDA compilation)
+├── convexiou/             # Python package
+│   ├── __init__.py        # Public API (rectangular_iou, batched_iou_from_lists, ...)
+│   └── gaucho.py          # GauCho detector integration
 ├── convexiou_cuda.cu      # CUDA kernels
-├── pybind_wrapper.cpp     # Python bindings
-└── examples/
-    └── example_usage.py   # Usage examples
+├── device_iou.cuh         # CUDA device functions (polygon ops)
+├── pybind_wrapper.cpp     # Python/C++ bindings (pybind11)
+├── examples/
+│   └── example_usage.py   # Usage examples
+└── tests/
+    ├── test_comparison.py          # GPU vs Shapely benchmark
+    └── test_gaucho_integration.py  # GauCho mAP validation
 ```
 
 ## Troubleshooting

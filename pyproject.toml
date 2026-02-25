@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=64", "wheel", "pybind11>=2.5.0", "numpy"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "convexiou"
+version = "2.0.0"
+description = "GPU-accelerated IoU for oriented bounding boxes via ellipse/polygon approximation"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+authors = [
+    {name = "Gabriel"},
+]
+keywords = ["iou", "oriented-bounding-box", "cuda", "gpu", "object-detection", "ellipse"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: C++",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+]
+dependencies = ["numpy"]
+
+[project.urls]
+Homepage = "https://github.com/your-repo/gpu_convex_iou"
+
+[project.optional-dependencies]
+dev = ["shapely", "pytest"]
+
+[tool.setuptools.packages.find]
+include = ["convexiou*"]

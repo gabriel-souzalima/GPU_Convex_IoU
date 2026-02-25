@@ -1,7 +1,12 @@
+#define _USE_MATH_DEFINES
 #include "device_iou.cuh"
 #include <iostream>
 #include <vector>
 #include <algorithm>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 // polygon points may be changed to decrease time/increase accuracy
 #define DEFAULT_NUM_POINTS 16
@@ -281,20 +286,21 @@ __global__ void iou_batched_rect_kernel(
     if (idx >= total_computations)
         return;
 
-    // binary search to find which pair this thread belongs to
-    int pair_idx = 0;
-    int cumsum = 0;
-    for (int p = 0; p < num_pairs; ++p)
+    int lo = 0, hi = num_pairs - 1, pair_idx = 0;
+    while (lo <= hi)
     {
-        int n_det = d_pair_info[p * 5 + 3];
-        int n_gt = d_pair_info[p * 5 + 4];
-        int pair_size = n_det * n_gt;
-        if (idx < cumsum + pair_size)
+        int mid = (lo + hi) / 2;
+        int mid_start = d_pair_info[mid * 5 + 2];
+        int mid_end = mid_start + d_pair_info[mid * 5 + 3] * d_pair_info[mid * 5 + 4];
+        if (idx < mid_start)
+            hi = mid - 1;
+        else if (idx >= mid_end)
+            lo = mid + 1;
+        else
         {
-            pair_idx = p;
+            pair_idx = mid;
             break;
         }
-        cumsum += pair_size;
     }
 
     int det_offset = d_pair_info[pair_idx * 5 + 0];
@@ -303,13 +309,7 @@ __global__ void iou_batched_rect_kernel(
     int n_det = d_pair_info[pair_idx * 5 + 3];
     int n_gt = d_pair_info[pair_idx * 5 + 4];
 
-    // recompute for pair_idx to get local index
-    cumsum = 0;
-    for (int p = 0; p < pair_idx; ++p)
-    {
-        cumsum += d_pair_info[p * 5 + 3] * d_pair_info[p * 5 + 4];
-    }
-    int local_idx = idx - cumsum;
+    int local_idx = idx - out_offset;
 
     int row_idx = local_idx / n_gt;
     int col_idx = local_idx % n_gt;

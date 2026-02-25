@@ -5,6 +5,11 @@
 #include <vector>
 #include <fstream>
 #include <iostream>
+#include <cstdint>
+
+#ifdef _MSC_VER
+typedef std::ptrdiff_t ssize_t;
+#endif
 
 struct EllipseData
 {
@@ -290,7 +295,7 @@ std::vector<float> calculate_iou_matrix_from_file(std::string filename, int num_
     return matrix;
 }
 
-PYBIND11_MODULE(convexiou_gpu, m)
+PYBIND11_MODULE(_core, m)
 {
     m.doc() = "GPU-accelerated Convex Polygon IoU Calculator for Ellipse Approximation";
 

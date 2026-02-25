@@ -13,11 +13,12 @@ import time
 
 # Import the GPU IoU library
 try:
-    import convexiou_gpu
-    print("✓ convexiou_gpu imported successfully")
+    from convexiou import rectangular_iou, batched_iou, matrix_iou, batched_iou_from_lists
+    import convexiou
+    print(f"✓ convexiou {convexiou.__version__} imported successfully")
 except ImportError as e:
-    print(f"✗ Failed to import convexiou_gpu: {e}")
-    print("  Make sure to install with: pip install /path/to/gpu_convex_IoU")
+    print(f"✗ Failed to import convexiou: {e}")
+    print("  Make sure to install with: pip install /path/to/GPU_Convex_IoU")
     exit(1)
 
 
@@ -50,11 +51,7 @@ def example_single_image():
     
     # Compute IoU matrix
     t0 = time.perf_counter()
-    iou_matrix = convexiou_gpu.calculate_iou_rectangular_numpy_from_numpy(
-        detections, 
-        ground_truths, 
-        num_points=16
-    )
+    iou_matrix = rectangular_iou(detections, ground_truths, num_points=16)
     elapsed = time.perf_counter() - t0
     
     print(f"\nIoU Matrix (shape {iou_matrix.shape}):")
@@ -138,9 +135,7 @@ def example_batched_evaluation():
     
     # Step 3: Single GPU call for all images
     t0 = time.perf_counter()
-    results, total_size = convexiou_gpu.calculate_iou_batched_rectangular(
-        all_dets, all_gts, pair_info, num_points=16
-    )
+    results, total_size = batched_iou(all_dets, all_gts, pair_info, num_points=16)
     batched_time = time.perf_counter() - t0
     
     print(f"Batched computation time: {batched_time*1000:.3f} ms")
@@ -159,9 +154,7 @@ def example_batched_evaluation():
     t0 = time.perf_counter()
     for dets, gts in zip(all_dets_per_image, all_gts_per_image):
         if len(dets) > 0 and len(gts) > 0:
-            _ = convexiou_gpu.calculate_iou_rectangular_numpy_from_numpy(
-                dets, gts, num_points=16
-            )
+            _ = rectangular_iou(dets, gts, num_points=16)
     per_image_time = time.perf_counter() - t0
     
     print(f"Per-image computation time: {per_image_time*1000:.3f} ms")
@@ -190,9 +183,7 @@ def example_nms_matrix():
     print(f"Computing NxN IoU matrix for {len(detections)} boxes")
     
     t0 = time.perf_counter()
-    iou_matrix = convexiou_gpu.calculate_iou_matrix_numpy_from_numpy(
-        detections, num_points=16
-    )
+    iou_matrix = matrix_iou(detections, num_points=16)
     elapsed = time.perf_counter() - t0
     
     print(f"\nIoU Matrix:\n{iou_matrix}")
@@ -272,7 +263,7 @@ def example_large_scale():
     print(f"Total IoU pairs: {total_pairs:,}")
     
     # Warm-up GPU
-    _ = convexiou_gpu.calculate_iou_batched_rectangular(
+    _ = batched_iou(
         all_dets[:100], all_gts[:50], 
         np.array([[0, 0, 0, 100, 50]], dtype=np.int32),
         num_points=16
@@ -284,9 +275,7 @@ def example_large_scale():
     
     for run in range(num_runs):
         t0 = time.perf_counter()
-        results, _ = convexiou_gpu.calculate_iou_batched_rectangular(
-            all_dets, all_gts, pair_info, num_points=16
-        )
+        results, _ = batched_iou(all_dets, all_gts, pair_info, num_points=16)
         times.append(time.perf_counter() - t0)
     
     avg_time = np.mean(times)
@@ -304,9 +293,8 @@ if __name__ == "__main__":
     
     # Check available functions
     print("\nAvailable functions:")
-    for name in dir(convexiou_gpu):
-        if not name.startswith('_'):
-            print(f"  - {name}")
+    for name in convexiou.__all__:
+        print(f"  - {name}")
     
     # Run examples
     example_single_image()
