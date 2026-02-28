@@ -2,11 +2,12 @@
 convexiou - GPU-accelerated IoU for oriented bounding boxes via ellipse/polygon approximation.
 
 Usage:
-    from convexiou import rectangular_iou, batched_iou, matrix_iou
+    from convexiou import ellipse_iou, batched_iou, matrix_iou
     from convexiou import batched_iou_from_lists
+    from convexiou import rectangular_iou  # backward-compatible alias for ellipse_iou
 """
 
-from convexiou._core import (
+from ._core import (
     calculate_iou_matrix,
     calculate_iou_matrix_numpy,
     calculate_iou_matrix_numpy_from_numpy,
@@ -20,7 +21,8 @@ from convexiou._core import (
 import numpy as np
 
 matrix_iou = calculate_iou_matrix_numpy_from_numpy
-rectangular_iou = calculate_iou_rectangular_numpy_from_numpy
+ellipse_iou = calculate_iou_rectangular_numpy_from_numpy
+rectangular_iou = ellipse_iou  # backward-compatible alias
 batched_iou = calculate_iou_batched_rectangular
 
 
@@ -30,12 +32,24 @@ def batched_iou_from_lists(dets_per_image, gts_per_image, num_points=16):
 
     Args:
         dets_per_image: list of (N_i, 5) float64 arrays — detections per image
+                        (also accepts a single bare (N, 5) ndarray for one image)
         gts_per_image:  list of (M_i, 5) float64 arrays — ground truths per image
+                        (also accepts a single bare (M, 5) ndarray for one image)
         num_points:     polygon approximation points (default 16)
 
     Returns:
-        list of (N_i, M_i) float32 IoU matrices, one per image
+        If input was bare arrays: single (N, M) float32 IoU matrix (same as ellipse_iou)
+        If input was lists: list of (N_i, M_i) float32 IoU matrices, one per image
     """
+    # Auto-wrap bare ndarray into a single-image list
+    _bare_input = False
+    if isinstance(dets_per_image, np.ndarray) and dets_per_image.ndim == 2:
+        dets_per_image = [dets_per_image]
+        _bare_input = True
+    if isinstance(gts_per_image, np.ndarray) and gts_per_image.ndim == 2:
+        gts_per_image = [gts_per_image]
+        _bare_input = True
+
     num_images = len(dets_per_image)
     if num_images != len(gts_per_image):
         raise ValueError(
@@ -88,13 +102,30 @@ def batched_iou_from_lists(dets_per_image, gts_per_image, num_points=16):
             nd = non_empty[i][1].shape[0]
             ng = non_empty[i][2].shape[0]
             out.append(np.zeros((nd, ng), dtype=np.float32))
+
+    # If input was bare arrays, return the matrix directly (like ellipse_iou)
+    if _bare_input and len(out) == 1:
+        return out[0]
     return out
 
 
-__version__ = "2.0.0"
+def _get_version():
+    import os
+    try:
+        toml_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'pyproject.toml')
+        with open(toml_path) as f:
+            for line in f:
+                if line.strip().startswith('version'):
+                    return line.split('=')[1].strip().strip('"')
+    except Exception:
+        pass
+    return "2.0.0"
+
+__version__ = _get_version()
 __all__ = [
-    "matrix_iou",
+    "ellipse_iou",
     "rectangular_iou",
+    "matrix_iou",
     "batched_iou",
     "batched_iou_from_lists",
     "calculate_iou_matrix",

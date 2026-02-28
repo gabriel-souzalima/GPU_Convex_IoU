@@ -204,17 +204,6 @@ ext_modules = [
 ]
 
 setup(
-    name='convexiou',
-    version='2.0.0',
-    author='Gabriel',
-    description='GPU-accelerated IoU for oriented bounding boxes via ellipse/polygon approximation',
-    long_description=open('README.md').read() if os.path.exists('README.md') else '',
-    long_description_content_type='text/markdown',
-    packages=['convexiou'],
     ext_modules=ext_modules,
-    setup_requires=['pybind11>=2.5.0', 'numpy'],
-    install_requires=['numpy'],
     cmdclass={'build_ext': custom_build_ext},
-    zip_safe=False,
-    python_requires='>=3.8',
 )

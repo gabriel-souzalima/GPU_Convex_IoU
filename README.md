@@ -74,13 +74,13 @@ Where:
 
 ### Functions
 
-#### 1. Single Image: `rectangular_iou`
+#### 1. Single Image: `ellipse_iou` (formerly `rectangular_iou`)
 
 Compute IoU matrix between detections and ground truths for **one image**:
 
 ```python
 import numpy as np
-from convexiou import rectangular_iou
+from convexiou import ellipse_iou
 
 # Detections: (N_det, 5) - [x, y, w, h, angle_rad]
 detections = np.array([
@@ -95,11 +95,13 @@ ground_truths = np.array([
 ], dtype=np.float64)
 
 # Compute IoU matrix (N_det x N_gt)
-iou_matrix = rectangular_iou(detections, ground_truths, num_points=16)
+iou_matrix = ellipse_iou(detections, ground_truths, num_points=16)
 
 print(iou_matrix.shape)  # (2, 2)
 print(iou_matrix)        # [[0.85, 0.0], [0.0, 0.0]]
 ```
+
+> **Note:** `rectangular_iou` is still available as a backward-compatible alias for `ellipse_iou`.
 
 #### 2. Batched (OPTIMAL): `batched_iou_from_lists`
 
@@ -145,7 +147,7 @@ To integrate GPU IoU with your rotated object detector's evaluation code:
 #### 1. Import the Library
 
 ```python
-from convexiou import rectangular_iou, batched_iou_from_lists
+from convexiou import ellipse_iou, batched_iou_from_lists
 ```
 
 #### 2. Replace Your IoU Function
@@ -165,10 +167,10 @@ def compute_iou_matrix(det_boxes, gt_boxes):
 
 **After (single image):**
 ```python
-from convexiou import rectangular_iou
+from convexiou import ellipse_iou
 
 def compute_iou_matrix(det_boxes, gt_boxes):
-    return rectangular_iou(
+    return ellipse_iou(
         det_boxes.astype(np.float64),
         gt_boxes.astype(np.float64),
     )
@@ -204,7 +206,7 @@ GPU_Convex_IoU/
 ├── pyproject.toml         # Package metadata (PEP 621)
 ├── setup.py               # Build configuration (CUDA compilation)
 ├── convexiou/             # Python package
-│   ├── __init__.py        # Public API (rectangular_iou, batched_iou_from_lists, ...)
+│   ├── __init__.py        # Public API (ellipse_iou, batched_iou_from_lists, ...)
 │   └── gaucho.py          # GauCho detector integration
 ├── convexiou_cuda.cu      # CUDA kernels
 ├── device_iou.cuh         # CUDA device functions (polygon ops)

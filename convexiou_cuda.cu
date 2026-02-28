@@ -3,10 +3,23 @@
 #include <iostream>
 #include <vector>
 #include <algorithm>
+#include <stdexcept>
+#include <string>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
+
+#define CUDA_CHECK(call)                                                       \
+    do {                                                                       \
+        cudaError_t err = (call);                                              \
+        if (err != cudaSuccess) {                                              \
+            throw std::runtime_error(                                          \
+                std::string("CUDA error at ") + __FILE__ + ":" +            \
+                std::to_string(__LINE__) + " — " +                            \
+                cudaGetErrorString(err));                                      \
+        }                                                                      \
+    } while (0)
 
 // polygon points may be changed to decrease time/increase accuracy
 #define DEFAULT_NUM_POINTS 16
@@ -65,24 +78,24 @@ extern "C" void run_iou_cuda(const std::vector<EllipseData> &h_e1,
     size_t size_bytes = n * sizeof(EllipseData);
     size_t res_size_bytes = n * sizeof(double);
 
-    cudaMalloc(&d_e1, size_bytes);
-    cudaMalloc(&d_e2, size_bytes);
-    cudaMalloc(&d_results, res_size_bytes);
+    CUDA_CHECK(cudaMalloc(&d_e1, size_bytes));
+    CUDA_CHECK(cudaMalloc(&d_e2, size_bytes));
+    CUDA_CHECK(cudaMalloc(&d_results, res_size_bytes));
 
-    cudaMemcpy(d_e1, h_e1.data(), size_bytes, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_e2, h_e2.data(), size_bytes, cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(d_e1, h_e1.data(), size_bytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_e2, h_e2.data(), size_bytes, cudaMemcpyHostToDevice));
 
     int blockSize = 256;
     int numBlocks = (n + blockSize - 1) / blockSize;
     compute_iou_kernel<<<numBlocks, blockSize>>>(d_e1, d_e2, d_results, n, num_points);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
 
-    cudaDeviceSynchronize();
+    CUDA_CHECK(cudaMemcpy(h_results.data(), d_results, res_size_bytes, cudaMemcpyDeviceToHost));
 
-    cudaMemcpy(h_results.data(), d_results, res_size_bytes, cudaMemcpyDeviceToHost);
-
-    cudaFree(d_e1);
-    cudaFree(d_e2);
-    cudaFree(d_results);
+    CUDA_CHECK(cudaFree(d_e1));
+    CUDA_CHECK(cudaFree(d_e2));
+    CUDA_CHECK(cudaFree(d_results));
 }
 
 // 2. NxN MATRIX
@@ -149,10 +162,10 @@ extern "C" void compute_iou_matrix_cuda(const std::vector<EllipseData> &ellipses
     EllipseData *d_ellipses_all;
     float *d_chunk_matrix;
 
-    cudaMalloc(&d_ellipses_all, n * sizeof(EllipseData));
-    cudaMalloc(&d_chunk_matrix, (size_t)CHUNK_SIZE * CHUNK_SIZE * sizeof(float));
+    CUDA_CHECK(cudaMalloc(&d_ellipses_all, n * sizeof(EllipseData)));
+    CUDA_CHECK(cudaMalloc(&d_chunk_matrix, (size_t)CHUNK_SIZE * CHUNK_SIZE * sizeof(float)));
 
-    cudaMemcpy(d_ellipses_all, ellipses.data(), n * sizeof(EllipseData), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(d_ellipses_all, ellipses.data(), n * sizeof(EllipseData), cudaMemcpyHostToDevice));
 
     // chunking loop for processing large matrices in parts
     for (int i = 0; i < n; i += CHUNK_SIZE)
@@ -169,21 +182,21 @@ extern "C" void compute_iou_matrix_cuda(const std::vector<EllipseData> &ellipses
             iou_matrix_kernel_tiled<<<numBlocks, blockSize>>>(
                 d_ellipses_all + i, d_ellipses_all + j,
                 d_chunk_matrix, rows_in_chunk, cols_in_chunk, num_points);
-
-            cudaDeviceSynchronize();
+            CUDA_CHECK(cudaGetLastError());
+            CUDA_CHECK(cudaDeviceSynchronize());
 
             for (int r = 0; r < rows_in_chunk; ++r)
             {
                 size_t host_offset = (size_t)(i + r) * n + j;
                 size_t device_offset = (size_t)r * cols_in_chunk;
-                cudaMemcpy(&h_matrix[host_offset], &d_chunk_matrix[device_offset],
-                           cols_in_chunk * sizeof(float), cudaMemcpyDeviceToHost);
+                CUDA_CHECK(cudaMemcpy(&h_matrix[host_offset], &d_chunk_matrix[device_offset],
+                           cols_in_chunk * sizeof(float), cudaMemcpyDeviceToHost));
             }
         }
     }
 
-    cudaFree(d_ellipses_all);
-    cudaFree(d_chunk_matrix);
+    CUDA_CHECK(cudaFree(d_ellipses_all));
+    CUDA_CHECK(cudaFree(d_chunk_matrix));
 }
 
 // 3. RECTANGULAR MATRIX (PER IMAGE)
@@ -250,25 +263,26 @@ extern "C" void compute_iou_rectangular_cuda(const std::vector<EllipseData> &row
     size_t cols_bytes = num_cols * sizeof(EllipseData);
     size_t mat_bytes = (size_t)num_rows * num_cols * sizeof(float);
 
-    cudaMalloc(&d_rows, rows_bytes);
-    cudaMalloc(&d_cols, cols_bytes);
-    cudaMalloc(&d_matrix, mat_bytes);
+    CUDA_CHECK(cudaMalloc(&d_rows, rows_bytes));
+    CUDA_CHECK(cudaMalloc(&d_cols, cols_bytes));
+    CUDA_CHECK(cudaMalloc(&d_matrix, mat_bytes));
 
-    cudaMemcpy(d_rows, rows.data(), rows_bytes, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_cols, cols.data(), cols_bytes, cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(d_rows, rows.data(), rows_bytes, cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_cols, cols.data(), cols_bytes, cudaMemcpyHostToDevice));
 
     int total = num_rows * num_cols;
     int blockSize = 256;
     int numBlocks = (total + blockSize - 1) / blockSize;
 
     iou_rect_kernel<<<numBlocks, blockSize>>>(d_rows, d_cols, d_matrix, num_rows, num_cols, num_points);
-    cudaDeviceSynchronize();
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
 
-    cudaMemcpy(h_matrix.data(), d_matrix, mat_bytes, cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(h_matrix.data(), d_matrix, mat_bytes, cudaMemcpyDeviceToHost));
 
-    cudaFree(d_rows);
-    cudaFree(d_cols);
-    cudaFree(d_matrix);
+    CUDA_CHECK(cudaFree(d_rows));
+    CUDA_CHECK(cudaFree(d_cols));
+    CUDA_CHECK(cudaFree(d_matrix));
 }
 
 // 4. BATCHED RECTANGULAR IoU
@@ -373,14 +387,14 @@ extern "C" void compute_iou_batched_rectangular_cuda(
     float *d_results = nullptr;
     int *d_pair_info = nullptr;
 
-    cudaMalloc(&d_all_dets, all_dets.size() * sizeof(EllipseData));
-    cudaMalloc(&d_all_gts, all_gts.size() * sizeof(EllipseData));
-    cudaMalloc(&d_results, total_output_size * sizeof(float));
-    cudaMalloc(&d_pair_info, pair_info.size() * sizeof(int));
+    CUDA_CHECK(cudaMalloc(&d_all_dets, all_dets.size() * sizeof(EllipseData)));
+    CUDA_CHECK(cudaMalloc(&d_all_gts, all_gts.size() * sizeof(EllipseData)));
+    CUDA_CHECK(cudaMalloc(&d_results, total_output_size * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_pair_info, pair_info.size() * sizeof(int)));
 
-    cudaMemcpy(d_all_dets, all_dets.data(), all_dets.size() * sizeof(EllipseData), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_all_gts, all_gts.data(), all_gts.size() * sizeof(EllipseData), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_pair_info, pair_info.data(), pair_info.size() * sizeof(int), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(d_all_dets, all_dets.data(), all_dets.size() * sizeof(EllipseData), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_all_gts, all_gts.data(), all_gts.size() * sizeof(EllipseData), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_pair_info, pair_info.data(), pair_info.size() * sizeof(int), cudaMemcpyHostToDevice));
 
     int blockSize = 256;
     int numBlocks = (total_computations + blockSize - 1) / blockSize;
@@ -388,12 +402,13 @@ extern "C" void compute_iou_batched_rectangular_cuda(
     iou_batched_rect_kernel<<<numBlocks, blockSize>>>(
         d_all_dets, d_all_gts, d_results, d_pair_info,
         num_pairs, (int)total_computations, num_points);
-    cudaDeviceSynchronize();
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaDeviceSynchronize());
 
-    cudaMemcpy(h_results.data(), d_results, total_output_size * sizeof(float), cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(h_results.data(), d_results, total_output_size * sizeof(float), cudaMemcpyDeviceToHost));
 
-    cudaFree(d_all_dets);
-    cudaFree(d_all_gts);
-    cudaFree(d_results);
-    cudaFree(d_pair_info);
+    CUDA_CHECK(cudaFree(d_all_dets));
+    CUDA_CHECK(cudaFree(d_all_gts));
+    CUDA_CHECK(cudaFree(d_results));
+    CUDA_CHECK(cudaFree(d_pair_info));
 }

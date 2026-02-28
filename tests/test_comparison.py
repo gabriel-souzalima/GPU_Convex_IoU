@@ -2,7 +2,8 @@ import numpy as np
 import time
 
 try:
-    from convexiou import rectangular_iou, batched_iou
+    from convexiou import ellipse_iou, rectangular_iou, batched_iou
+    # ellipse_iou is the primary name; rectangular_iou kept for compat
 except ImportError:
     print("convexiou not installed. Run: pip install .")
     exit(1)

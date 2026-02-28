@@ -13,7 +13,7 @@ import time
 
 # Import the GPU IoU library
 try:
-    from convexiou import rectangular_iou, batched_iou, matrix_iou, batched_iou_from_lists
+    from convexiou import ellipse_iou, rectangular_iou, batched_iou, matrix_iou, batched_iou_from_lists
     import convexiou
     print(f"✓ convexiou {convexiou.__version__} imported successfully")
 except ImportError as e:
@@ -51,7 +51,7 @@ def example_single_image():
     
     # Compute IoU matrix
     t0 = time.perf_counter()
-    iou_matrix = rectangular_iou(detections, ground_truths, num_points=16)
+    iou_matrix = ellipse_iou(detections, ground_truths, num_points=16)
     elapsed = time.perf_counter() - t0
     
     print(f"\nIoU Matrix (shape {iou_matrix.shape}):")
@@ -154,7 +154,7 @@ def example_batched_evaluation():
     t0 = time.perf_counter()
     for dets, gts in zip(all_dets_per_image, all_gts_per_image):
         if len(dets) > 0 and len(gts) > 0:
-            _ = rectangular_iou(dets, gts, num_points=16)
+            _ = ellipse_iou(dets, gts, num_points=16)
     per_image_time = time.perf_counter() - t0
     
     print(f"Per-image computation time: {per_image_time*1000:.3f} ms")
